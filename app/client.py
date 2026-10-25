@@ -1,4 +1,4 @@
-import socket, time, sys, csv, argparse, os
+import socket, time, sys, csv, argparse, os, hashlib
 
 p = argparse.ArgumentParser()
 p.add_argument('--name', required=True)
@@ -7,6 +7,7 @@ p.add_argument('--port', type=int, default=8000)
 p.add_argument('--client', default='c?')
 p.add_argument('--log', default='results/raw.csv')
 p.add_argument('--tag', default='')
+p.add_argument('--verify-dir', default='content')
 a = p.parse_args()
 
 def recv_line(s):
@@ -19,6 +20,7 @@ def recv_line(s):
     return buf.decode().strip()
 
 offset, total, retries, ttfb = 0, None, 0, None
+h = hashlib.sha256()
 t0 = time.time()
 while retries <= 5:
     try:
@@ -38,6 +40,7 @@ while retries <= 5:
                 raise ConnectionError
             if ttfb is None:
                 ttfb = time.time() - t0
+            h.update(chunk)
             got += len(chunk)
             offset += len(chunk)
         s.close()
@@ -54,4 +57,14 @@ os.makedirs(os.path.dirname(a.log) or '.', exist_ok=True)
 with open(a.log, 'a', newline='') as f:
     csv.writer(f).writerow([a.tag, a.client, a.name, total, round(ttfb or 0, 3),
                             round(dt, 3), round(total * 8 / dt / 1e6, 2), retries])
-print(f'{a.client} got {total} bytes in {dt:.2f}s, retries={retries}')
+exp = hashlib.sha256()
+try:
+    with open(os.path.join(a.verify_dir, os.path.basename(a.name)), 'rb') as f:
+        for blk in iter(lambda: f.read(1 << 20), b''):
+            exp.update(blk)
+    status = 'OK' if exp.hexdigest() == h.hexdigest() else 'MISMATCH'
+except OSError:
+    status = 'UNVERIFIED'
+print(f'{a.client} got {total} bytes in {dt:.2f}s, retries={retries} checksum={status}')
+if status == 'MISMATCH':
+    sys.exit(3)
