@@ -61,9 +61,9 @@ def run_clients(n, tag):
 
 def condition(cond):
     if cond == 'congested':
-        procs['iperf_s'] = srv['srv1'].popen(['iperf', '-s'], stdout=DEVNULL, stderr=DEVNULL)
+        procs['iperf_s'] = c4.popen(['iperf', '-s'], stdout=DEVNULL, stderr=DEVNULL)
         time.sleep(1)
-        procs['iperf_c'] = c4.popen(['iperf', '-c', '10.0.0.11', '-t', '3600'],
+        procs['iperf_c'] = srv['srv1'].popen(['iperf', '-c', '10.0.0.4', '-t', '3600'],
                                     stdout=DEVNULL, stderr=DEVNULL)
         time.sleep(8)
     elif cond == 'failed':
@@ -95,6 +95,8 @@ try:
     time.sleep(10)
     net.pingAll()
     net.pingAll()
+    for _ in range(2):
+        run_clients(3, 'warmup')   # not recorded: primes caches and TCP state
     for cond in ('normal', 'congested', 'failed'):
         condition(cond)
         for n in COUNTS:
