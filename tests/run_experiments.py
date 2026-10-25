@@ -13,6 +13,7 @@ p.add_argument('--mode', required=True, choices=['static', 'dynamic'])
 p.add_argument('--quick', action='store_true')
 p.add_argument('--file', default='exp.bin')
 p.add_argument('--out', default='results/experiments.csv')
+p.add_argument('--only', default='')
 a = p.parse_args()
 
 COUNTS = [1, 3] if a.quick else [1, 3, 6]
@@ -63,7 +64,7 @@ def condition(cond):
     if cond == 'congested':
         procs['iperf_s'] = c4.popen(['iperf', '-s'], stdout=DEVNULL, stderr=DEVNULL)
         time.sleep(1)
-        procs['iperf_c'] = srv['srv1'].popen(['iperf', '-c', '10.0.0.4', '-t', '3600'],
+        procs['iperf_c'] = srv['srv1'].popen(['iperf', '-c', '10.0.0.4', '-t', '3600', '-P', '4'],
                                     stdout=DEVNULL, stderr=DEVNULL)
         time.sleep(8)
     elif cond == 'failed':
@@ -97,7 +98,7 @@ try:
     net.pingAll()
     for _ in range(2):
         run_clients(3, 'warmup')   # not recorded: primes caches and TCP state
-    for cond in ('normal', 'congested', 'failed'):
+    for cond in [c for c in ('normal', 'congested', 'failed') if not a.only or c == a.only]:
         condition(cond)
         for n in COUNTS:
             for rep in range(1, REPS + 1):
