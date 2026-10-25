@@ -1,3 +1,6 @@
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from selector import Selector
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
@@ -16,9 +19,10 @@ class CDN(app_manager.RyuApp):
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
         self.mac_to_port = {}
+        self.sel = Selector(self.logger)
 
     def choose_server(self):
-        return 'srv1'   # hard-coded for now; replaced by the cost function later
+        return self.sel.pick()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def features(self, ev):
@@ -80,6 +84,9 @@ class CDN(app_manager.RyuApp):
     def steer(self, dp, in_port, eth, ip, t, data):
         ofp, ps = dp.ofproto, dp.ofproto_parser
         name = self.choose_server()
+        if name is None:
+            self.logger.warning('no healthy server, dropping SYN from %s', ip.src)
+            return
         s_ip, s_mac = SERVERS[name]
         out_s = self.mac_to_port[dp.id].get(s_mac, ofp.OFPP_FLOOD)
 

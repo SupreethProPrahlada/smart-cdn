@@ -1,0 +1,4 @@
+content/*.bin
+results/raw.csv
+*.save
+__pycache__/
