@@ -1,6 +1,7 @@
-import os, sys
+import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from selector import Selector
+from ryu.lib import hub
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
@@ -8,9 +9,14 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, arp, ipv4, tcp, ether_types
 
 VIP, VIP_MAC, PORT = '10.0.0.100', '00:00:00:00:01:00', 8000
+# s1 port -> (server, link capacity in bit/s)
+PATHS = {5: ('srv1', 100e6), 6: ('srv2', 50e6), 7: ('srv3', 10e6)}
 SERVERS = {'srv1': ('10.0.0.11', '00:00:00:00:00:11'),
            'srv2': ('10.0.0.12', '00:00:00:00:00:12'),
            'srv3': ('10.0.0.13', '00:00:00:00:00:13')}
+
+
+MODE = os.environ.get('CDN_MODE', 'dynamic')   # dynamic or static
 
 
 class CDN(app_manager.RyuApp):
@@ -20,8 +26,15 @@ class CDN(app_manager.RyuApp):
         super().__init__(*args, **kw)
         self.mac_to_port = {}
         self.sel = Selector(self.logger)
+        self.dps = {}
+        self.logger.info('mode: %s', MODE)
+        self.prev = {}
+        hub.spawn(self.monitor)
 
-    def choose_server(self):
+    def choose_server(self, client_ip):
+        if MODE == 'static':
+            # fixed assignment: c1->srv1, c2->srv2, c3->srv3, c4->srv1
+            return ['srv1', 'srv2', 'srv3'][(int(client_ip.split('.')[-1]) - 1) % 3]
         return self.sel.pick()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -35,6 +48,7 @@ class CDN(app_manager.RyuApp):
         # table-miss: send unknown packets to the controller
         actions = [ps.OFPActionOutput(ofp.OFPP_CONTROLLER, ofp.OFPCML_NO_BUFFER)]
         self.add_flow(dp, 0, ps.OFPMatch(), actions)
+        self.dps[dp.id] = dp
         self.logger.info('switch %s connected', dp.id)
 
     def add_flow(self, dp, prio, match, actions, idle=0):
@@ -83,7 +97,7 @@ class CDN(app_manager.RyuApp):
 
     def steer(self, dp, in_port, eth, ip, t, data):
         ofp, ps = dp.ofproto, dp.ofproto_parser
-        name = self.choose_server()
+        name = self.choose_server(ip.src)
         if name is None:
             self.logger.warning('no healthy server, dropping SYN from %s', ip.src)
             return
@@ -115,3 +129,32 @@ class CDN(app_manager.RyuApp):
             self.add_flow(dp, 1, ps.OFPMatch(in_port=in_port, eth_dst=eth.dst),
                           actions, idle=60)
         self.packet_out(dp, in_port, actions, data)
+
+    def monitor(self):
+        while True:
+            dp = self.dps.get(1)
+            if dp is not None:
+                ps = dp.ofproto_parser
+                dp.send_msg(ps.OFPPortStatsRequest(dp, 0, dp.ofproto.OFPP_ANY))
+            hub.sleep(2)
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def port_stats(self, ev):
+        dp = ev.msg.datapath
+        if dp.id != 1:
+            return
+        now = time.time()
+        for st in ev.msg.body:
+            if st.port_no not in PATHS:
+                continue
+            name, cap = PATHS[st.port_no]
+            old = self.prev.get(st.port_no)
+            self.prev[st.port_no] = (now, st.rx_bytes, st.tx_bytes)
+            if old is None or now <= old[0]:
+                continue
+            dt = now - old[0]
+            rate = max(st.rx_bytes - old[1], st.tx_bytes - old[2]) * 8 / dt
+            util = min(rate / cap, 1.0)
+            self.sel.util[name] = util
+            if util >= 0.1:
+                self.logger.info('path %s utilisation %.2f', name, util)
