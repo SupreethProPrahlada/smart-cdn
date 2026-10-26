@@ -26,25 +26,39 @@ The `pyproject.toml` and `uv.lock` files pin the Python 3.9 environment and comp
 
 ## Run a scenario
 
-Stop stale Mininet/controller processes before cleanup:
+Clean up stale Mininet state before starting a new run:
 
 ```sh
 sudo mn -c
 ```
 
-In one terminal, start the controller in dynamic mode (use `CDN_MODE=static` for the fixed-assignment baseline):
+In Terminal 1, start the controller in dynamic mode (use
+`CDN_MODE=static` for the fixed-assignment baseline). Leave it running:
 
 ```sh
 uv run ryu-manager controller/cdn_controller.py
 ```
 
-In another terminal, run all three demo scenarios:
+In Terminal 2, run all three demo scenarios:
 
 ```sh
 uv run python tests/run_scenarios.py all
 ```
 
-The runner creates and stops its own topology, servers, and clients, and re-launches itself with `sudo` when needed. For one scenario, replace `all` with `smoke`, `failover`, or `congestion`. The smoke scenario verifies downloads and prints the installed CDN flow rules. Run failover in dynamic mode to kill a server during a download and check checksum verified resume. The runner restarts the server afterward.
+The runner re-launches itself with `sudo` when needed. For one scenario,
+replace `all` with `smoke`, `failover`, or `congestion`. The smoke scenario
+verifies downloads and prints the installed CDN flow rules. Run failover in
+dynamic mode: after a server stops sending heartbeats, the controller waits
+up to 10 seconds to mark it down and sends new connections to a healthy server.
+The client retries during that detection window and resumes from its last
+received byte; it allows 12 retries. The runner restarts the server afterward.
+The `sch_htb: quantum ... is big` messages during topology startup are Linux
+traffic-control warnings from Mininet's shaped links and do not indicate that
+cleanup or scenario startup failed.
+The runner checks that Ryu's OpenFlow port `6653` and heartbeat port `9000`
+are both reachable on localhost before starting Mininet. If either port is
+unavailable, the runner exits with the controller start command instead of
+starting a scenario without a working controller.
 
 ## Performance comparison
 

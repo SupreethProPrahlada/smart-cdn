@@ -4,6 +4,7 @@
 import argparse
 import os
 import socket
+import sys
 import threading
 import time
 
@@ -71,14 +72,22 @@ def handle(conn, args):
 
 
 def send_heartbeat(args):
+    last_error = None
     while True:
         with active_lock:
             count = active_connections
         try:
             with socket.create_connection((args.ctrl, args.ctrl_port), timeout=1) as conn:
                 conn.sendall(f"STATUS {args.id} {count} {time.time()}\n".encode())
-        except OSError:
-            pass
+            if last_error:
+                print(f"heartbeat to {args.ctrl}:{args.ctrl_port} restored", file=sys.stderr)
+                last_error = None
+        except OSError as error:
+            message = str(error)
+            if message != last_error:
+                print(f"heartbeat to {args.ctrl}:{args.ctrl_port} failed: {message}",
+                      file=sys.stderr)
+                last_error = message
         time.sleep(HEARTBEAT_INTERVAL)
 
 

@@ -50,10 +50,14 @@ class Selector:
                     break
                 data.extend(chunk)
 
+            if not data:
+                return
             parts = data.decode(errors="ignore").split()
             if len(parts) > 1:
                 parts[1] = SERVER_IPS.get(parts[1], parts[1])
             if len(parts) >= 3 and parts[0] == "STATUS" and parts[1] in PATH_DELAY_MS:
+                if parts[1] not in self.last_seen:
+                    self.log.info("received first heartbeat from %s", parts[1])
                 self.last_seen[parts[1]] = time.time()
                 self.active[parts[1]] = int(parts[2])
             else:

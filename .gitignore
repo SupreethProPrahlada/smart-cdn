@@ -3,5 +3,6 @@ results/raw.csv
 results/data/client-transfers.csv
 *.save
 __pycache__/
+*.py[cod]
 AGENTS.md
 .venv/

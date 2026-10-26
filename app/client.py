@@ -11,7 +11,10 @@ import time
 
 
 CHUNK_SIZE = 64 * 1024
-MAX_RETRIES = 5
+# A dead server is declared unhealthy after the controller's 10 second
+# heartbeat timeout. Keep retrying long enough for that health transition and
+# the next server selection to take effect.
+MAX_RETRIES = 12
 
 
 def parse_args():
@@ -74,7 +77,7 @@ def download(args):
             if retries > MAX_RETRIES:
                 print("FAILED")
                 return 2
-            time.sleep(min(2 ** (retries - 1), 4))
+            time.sleep(1)
 
     elapsed = time.monotonic() - started
     ttfb = first_byte - started if first_byte is not None else 0

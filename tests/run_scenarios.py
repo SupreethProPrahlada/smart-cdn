@@ -5,6 +5,7 @@ import argparse
 import csv
 import os
 import re
+import socket
 import sys
 import time
 from pathlib import Path
@@ -61,17 +62,37 @@ class ScenarioRunner:
         self.procs = {}
 
     def start(self):
+        self.wait_for_controller()
         self.net.start()
         for name, host in self.servers.items():
             self.start_server(name, host)
         time.sleep(12)
         self.net.pingAll()
 
+    @staticmethod
+    def wait_for_controller(timeout=10):
+        ports = (9000, 6653)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                for port in ports:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                        pass
+                return
+            except OSError:
+                time.sleep(0.5)
+        raise RuntimeError(
+            "Ryu must be listening on 127.0.0.1:6653 (OpenFlow) and "
+            "127.0.0.1:9000 (server heartbeats) in the runner's network namespace. "
+            "Start it in another terminal with: "
+            "uv run ryu-manager controller/cdn_controller.py"
+        )
+
     def start_server(self, name, host=None):
         host = host or self.servers[name]
         self.procs[name] = host.popen(
             [sys.executable, str(ROOT / "app/server.py"), "--id", name],
-            stdout=DEVNULL, stderr=DEVNULL,
+            stdout=DEVNULL, stderr=None,
         )
 
     def stop_process(self, name):
@@ -118,7 +139,10 @@ class ScenarioRunner:
         print(output.strip())
         result = parse_client_output(output)
         if process.returncode or not result or result[3] != "OK" or result[2] < 1:
-            raise RuntimeError("failover did not complete with a verified resumed download")
+            raise RuntimeError(
+                "failover did not complete with a verified resumed download; "
+                f"client exit={process.returncode}, output={output.strip()!r}"
+            )
         print("Restarting srv1 to demonstrate recovery")
         self.start_server("srv1")
 
