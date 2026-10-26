@@ -6,7 +6,7 @@ L_MAX = 50.0
 IPMAP = {'10.0.0.11': 'srv1', '10.0.0.12': 'srv2', '10.0.0.13': 'srv3'}
 C_MAX = 10.0
 W_LAT, W_UTIL, W_LOAD = 0.4, 0.4, 0.2
-TIMEOUT = 6.0                               # seconds without heartbeat = DOWN
+TIMEOUT = 10.0
 
 
 class Selector:
