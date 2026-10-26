@@ -1,0 +1,8 @@
+Test: during a download through the virtual IP, at the mininet> prompt:
+    sh ovs-ofctl -O OpenFlow13 dump-flows s1 | grep priority=100
+
+Expected: two rules (port numbers and counters vary, tp_src is the client's source port).
+Reference output from a run (client c1, server srv1):
+ priority=100,tcp,nw_src=10.0.0.1,nw_dst=10.0.0.100,tp_src=52284,tp_dst=8000 actions=set_field:00:00:00:00:00:11->eth_dst,set_field:10.0.0.11->ip_dst,output:5
+ priority=100,tcp,nw_src=10.0.0.11,nw_dst=10.0.0.1,tp_src=8000,tp_dst=52284 actions=set_field:00:00:00:00:01:00->eth_src,set_field:10.0.0.100->ip_src,output:1
+Both rules have idle_timeout=30 and disappear about 30 s after the transfer ends.

@@ -1,0 +1,12 @@
+Test: source tests/failover_check.cmd   (controller in dynamic mode)
+
+Client result (tests/check_result.py /tmp/c1.out 1 must print PASS). Time and retries vary:
+    10.0.0.1 got 104857600 bytes in 33.31s, retries=1 checksum=OK
+Rules: bytes equal 104857600, checksum=OK, retries at least 1.
+
+Controller terminal, in this order (numbers vary):
+    flow 10.0.0.1:<port> -> VIP steered to srv1
+    server srv1 is DOWN (last heartbeat 10.x s ago)
+    deleted flow rules for srv1
+    flow 10.0.0.1:<port> -> VIP steered to srv2
+No DOWN line for srv2 or srv3. If the first steered line says srv2, the run is not a valid failover test.
