@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
+import os
+from pathlib import Path
+import sys
+
 from mininet.net import Mininet
 from mininet.node import RemoteController, OVSSwitch
 from mininet.link import TCLink
 from mininet.cli import CLI
 from mininet.log import setLogLevel
+
+# Mininet host shells inherit this environment. Put the uv-managed interpreter
+# first so the documented `python3` commands in the Mininet CLI use this env.
+os.environ['PATH'] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')
 
 def build():
     net = Mininet(controller=None, switch=OVSSwitch, link=TCLink)
@@ -27,8 +35,10 @@ def build():
     net.addLink(s1, s3, delay='20ms', bw=50)
     net.addLink(s1, s4, delay='50ms', bw=10)
 
-    # NAT node in the root namespace so servers can reach the controller's socket
-    net.addNAT(connect=s1, ip='10.0.0.254/24')
+    # Give the controller host a Mininet-facing address for server heartbeats.
+    heartbeat_host = net.addHost('hb', ip='10.0.0.254/24',
+                                 mac='00:00:00:00:00:fe', inNamespace=False)
+    net.addLink(heartbeat_host, s1)
     return net
 
 if __name__ == '__main__':

@@ -1,6 +1,10 @@
-import os, sys, time
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from selector import Selector
+
 from ryu.lib import hub
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -8,12 +12,20 @@ from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cl
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, arp, ipv4, tcp, ether_types
 
-VIP, VIP_MAC, PORT = '10.0.0.100', '00:00:00:00:01:00', 8000
+VIP = '10.0.0.100'
+VIP_MAC = '00:00:00:00:01:00'
+PORT = 8000
 # s1 port -> (server, link capacity in bit/s)
-PATHS = {5: ('srv1', 100e6), 6: ('srv2', 50e6), 7: ('srv3', 10e6)}
-SERVERS = {'srv1': ('10.0.0.11', '00:00:00:00:00:11'),
-           'srv2': ('10.0.0.12', '00:00:00:00:00:12'),
-           'srv3': ('10.0.0.13', '00:00:00:00:00:13')}
+PATHS = {
+    5: ('srv1', 100e6),
+    6: ('srv2', 50e6),
+    7: ('srv3', 10e6),
+}
+SERVERS = {
+    'srv1': ('10.0.0.11', '00:00:00:00:00:11'),
+    'srv2': ('10.0.0.12', '00:00:00:00:00:12'),
+    'srv3': ('10.0.0.13', '00:00:00:00:00:13'),
+}
 
 
 MODE = os.environ.get('CDN_MODE', 'dynamic')   # dynamic or static
