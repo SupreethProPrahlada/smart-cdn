@@ -29,6 +29,7 @@ class CDN(app_manager.RyuApp):
         self.dps = {}
         self.logger.info('mode: %s', MODE)
         self.prev = {}
+        self.sel.on_down = self.flush_server
         hub.spawn(self.monitor)
 
     def choose_server(self, client_ip):
@@ -158,3 +159,21 @@ class CDN(app_manager.RyuApp):
             self.sel.util[name] = util
             if util >= 0.1:
                 self.logger.info('path %s utilisation %.2f', name, util)
+
+    def flush_server(self, name):
+        dp = self.dps.get(1)
+        if dp is None:
+            return
+        ofp, ps = dp.ofproto, dp.ofproto_parser
+        s_ip = SERVERS[name][0]
+        port = [p for p, v in PATHS.items() if v[0] == name][0]
+        # forward rules (and L2 rules) that send traffic toward this server
+        dp.send_msg(ps.OFPFlowMod(datapath=dp, command=ofp.OFPFC_DELETE,
+                                  out_port=port, out_group=ofp.OFPG_ANY,
+                                  match=ps.OFPMatch()))
+        # reverse rules that carry this server's replies
+        dp.send_msg(ps.OFPFlowMod(datapath=dp, command=ofp.OFPFC_DELETE,
+                                  out_port=ofp.OFPP_ANY, out_group=ofp.OFPG_ANY,
+                                  match=ps.OFPMatch(eth_type=0x0800, ip_proto=6,
+                                                    ipv4_src=s_ip, tcp_src=PORT)))
+        self.logger.info('deleted flow rules for %s', name)

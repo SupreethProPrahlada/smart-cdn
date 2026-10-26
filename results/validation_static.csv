@@ -1,0 +1,13 @@
+mode,condition,nclients,rep,client,time_s,mbps,retries,status
+static,normal,1,1,c1,0.5,83.89,0,ok
+static,normal,3,1,c1,1.39,30.17,0,ok
+static,normal,3,1,c2,0.56,74.9,0,ok
+static,normal,3,1,c3,1.31,32.02,0,ok
+static,congested,1,1,c1,1.1,38.13,0,ok
+static,congested,3,1,c1,2.22,18.89,0,ok
+static,congested,3,1,c2,2.85,14.72,0,ok
+static,congested,3,1,c3,2.68,15.65,0,ok
+static,failed,1,1,c1,1.09,38.48,0,ok
+static,failed,3,1,c1,1.89,22.19,0,ok
+static,failed,3,1,c2,2.84,14.77,0,ok
+static,failed,3,1,c3,2.48,16.91,0,ok

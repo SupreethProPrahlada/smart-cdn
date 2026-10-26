@@ -16,6 +16,7 @@ class Selector:
         self.active = {}
         self.util = {n: 0.0 for n in LAT}   # filled by port stats in a later step
         self.was_healthy = {}
+        self.on_down = None
         hub.spawn(self._listen, port)
         hub.spawn(self._watch)
 
@@ -57,6 +58,8 @@ class Selector:
                 if self.was_healthy.get(n) != h:
                     self.log.info('server %s is %s (last heartbeat %.1fs ago)', n, 'UP' if h else 'DOWN', time.time() - self.last_seen.get(n, time.time()))
                     self.was_healthy[n] = h
+                    if not h and self.on_down:
+                        self.on_down(n)
             hub.sleep(1)
 
     def healthy(self, n):
