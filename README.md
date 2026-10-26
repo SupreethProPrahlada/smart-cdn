@@ -1,108 +1,70 @@
-# Smart Content Delivery System (TCP, SDN)
+# Smart Content Delivery System
 
-Clients request content from a virtual IP. A Ryu controller (OpenFlow 1.3) picks a content server
-for each new flow from server heartbeats and link measurements, rewrites the packets, and reroutes
-traffic when a server fails. Everything runs in Mininet with Open vSwitch.
+A raw TCP content service that uses a Ryu SDN controller to select among three servers in Mininet. The controller considers server health, reported load, configured path delay, and measured link utilization.
 
-See docs/architecture.md for the design, the selection rule and the failure behaviour.
+## Requirements and setup
 
-## Layout
+Install the system networking tools on Ubuntu:
 
-    topology/    Mininet script (4 clients, 3 servers, 4 switches, links with different delay and bandwidth)
-    controller/  Ryu app (cdn_controller.py) and server selector (selector.py)
-    app/         TCP content server (server.py) and client (client.py), raw sockets
-    config/      fixed addresses and ports (settings.md)
-    tests/       Mininet command scripts, experiment runner, graph script, helper scripts
-    results/     raw data, summary table and graphs
-    docs/        architecture document
+```sh
+sudo apt update
+sudo apt install -y mininet openvswitch-switch iperf curl
+sudo systemctl start openvswitch-switch
+```
 
-## Install (Ubuntu in a VM, tested with Python 3.14 as system Python)
+Install `uv` using its official installer, then install the pinned Python environment and generate the sample payloads:
 
-    sudo apt update
-    sudo apt install -y mininet openvswitch-switch iperf tcpdump git python3-pip python3-venv curl python3-matplotlib
-    sudo systemctl start openvswitch-switch
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+uv run python tests/make_content.py
+```
 
-Ryu does not run on new Python versions, so it gets its own Python 3.9 environment:
+The `pyproject.toml` and `uv.lock` files pin the Python 3.9 environment and compatible Ryu/Mininet revisions.
 
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    source $HOME/.local/bin/env
-    uv python install 3.9
-    uv venv --python 3.9 ~/ryu-env
-    source ~/ryu-env/bin/activate
-    uv pip install "setuptools<58" wheel pbr "eventlet==0.30.2"
-    uv pip install --no-build-isolation "git+https://github.com/faucetsdn/ryu.git"
-    ryu-manager --version
+`content/` stores generated binary payloads. Servers read these files and clients use them as checksum references. The scenario runner generates them automatically if they are missing; the binaries are ignored by Git.
 
-The last command should print 4.34.
+## Run a scenario
 
-## Run
+Stop stale Mininet/controller processes before cleanup:
 
-    git clone <repo-url> smart-cdn
-    cd smart-cdn
-    tests/make_content.sh
+```sh
+sudo mn -c
+```
 
-Use three terminals, all in the repo folder. Order matters: run the cleanup first, because it
-kills any running controller.
+In one terminal, start the controller in dynamic mode (use `CDN_MODE=static` for the fixed-assignment baseline):
 
-Terminal 3, once, before anything else:
+```sh
+uv run ryu-manager controller/cdn_controller.py
+```
 
-    sudo mn -c
+In another terminal, run all three demo scenarios:
 
-Terminal 1, controller (dynamic mode, or `static` for the baseline):
+```sh
+uv run python tests/run_scenarios.py all
+```
 
-    tests/run_controller.sh dynamic
+The runner creates and stops its own topology, servers, and clients, and re-launches itself with `sudo` when needed. For one scenario, replace `all` with `smoke`, `failover`, or `congestion`. The smoke scenario verifies downloads and prints the installed CDN flow rules. Run failover in dynamic mode to kill a server during a download and check checksum verified resume. The runner restarts the server afterward.
 
-Terminal 2, topology:
+## Performance comparison
 
-    tests/run_topology.sh
+Run experiments once per controller mode. Restart the controller in the matching mode between runs:
 
-Wait until terminal 1 prints "switch 1 connected" to "switch 4 connected".
+```sh
+uv run python tests/run_scenarios.py experiments --mode dynamic
+uv run python tests/run_scenarios.py experiments --mode static
+uv run python tests/run_scenarios.py report
+```
 
-At the mininet> prompt, start the three servers and wait about 15 seconds:
+Restart the controller in the matching mode between experiment runs. Add `--quick` for fewer repetitions and client counts, or `--only normal`, `--only congested`, or `--only failed` to select one condition. Measurements append to `results/data/experiments.csv`; reports and figures are written under `results/reports/` and `results/figures/`.
 
-    srv1 python3 app/server.py --id srv1 &
-    srv2 python3 app/server.py --id srv2 &
-    srv3 python3 app/server.py --id srv3 &
-    pingall
+## Project layout
 
-Terminal 1 prints "server srv1 is UP" and the same for srv2 and srv3.
-Do not run `sudo mn -c` again while the controller is running.
+- `app/`: TCP client and concurrent content server
+- `controller/`: Ryu application and server selection logic
+- `topology/`: Mininet network definition
+- `config/`: fixed network addresses and ports
+- `tests/`: content generator, scenario runner, and report generator
+- `results/`: experiment data, reports, figures, and a separated archive of older runs
 
-Note: Mininet replaces a host name inside a command with its IP, so servers report their IP as id.
-The selector translates 10.0.0.11 to 10.0.0.13 back to srv1 to srv3.
-
-## Demos and tests (at the mininet> prompt, with the controller in dynamic mode)
-
-    source tests/failover_check.cmd
-
-Starts the servers, downloads 100 MB through the virtual IP, kills srv1's server after 5 seconds
-and prints the client result. Expect "checksum=OK" and retries of at least 1. Terminal 1 shows the
-download steered to srv1, then "server srv1 is DOWN", "deleted flow rules for srv1" and the
-reconnect steered to srv2. Compare tests/expected/ for the reference output.
-
-    source tests/checksum.cmd        data integrity, including after a failover
-    source tests/congestion_check2.cmd   congestion with four iperf streams on srv1's path
-
-Flow rules can be inspected during a download:
-
-    sh ovs-ofctl -O OpenFlow13 dump-flows s1 | grep priority=100
-
-## Experiments
-
-Leave the mininet> prompt (type exit), keep the controller running in the matching mode, then:
-
-    sudo python3 tests/run_experiments.py --mode dynamic --file video1.bin
-    sudo python3 tests/run_experiments.py --mode static  --file video1.bin
-    python3 tests/make_graphs.py
-
-The controller mode and the --mode label must match. Each run takes 10 to 20 minutes per mode.
-Add --only normal, --only congested or --only failed to run one condition. Results are appended
-to results/experiments.csv. Graphs and results/summary.md are written by make_graphs.py.
-
-## Results (3 repetitions per cell)
-
-- Failed server: dynamic completed 30 of 30 downloads, static 18 of 30.
-- Congested path, 1 client: 8.5 s (dynamic) against 28.0 s (static).
-- Congested path with 3 and 6 clients, and normal conditions: inconclusive, differences are within noise.
-
-Limitations are listed in docs/architecture.md.
+See [docs/architecture.md](docs/architecture.md) for protocol, selection, and failure details.

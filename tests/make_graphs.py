@@ -1,14 +1,23 @@
-import csv, os, statistics as st
+import csv
+import statistics as st
 from collections import defaultdict
+from pathlib import Path
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-rows = list(csv.DictReader(open(os.path.join(ROOT, 'results', 'experiments.csv'))))
+ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / 'results' / 'data'
+FIGURES = ROOT / 'results' / 'figures'
+REPORTS = ROOT / 'results' / 'reports'
+with (DATA / 'experiments.csv').open(newline='') as source:
+    rows = list(csv.DictReader(source))
 CONDS = ['normal', 'congested', 'failed']
 COUNTS = [1, 3, 6]
 MODES = ['dynamic', 'static']
+if not rows or not all(any(row['mode'] == mode for row in rows) for mode in MODES):
+    raise SystemExit('Run experiments in both dynamic and static modes before making reports.')
 
 g = defaultdict(list)
 for r in rows:
@@ -31,6 +40,8 @@ def stats(mode, cond, n):
 
 
 w = 0.35
+FIGURES.mkdir(parents=True, exist_ok=True)
+REPORTS.mkdir(parents=True, exist_ok=True)
 
 
 def plot(metric, ylabel, fname):
@@ -58,7 +69,7 @@ def plot(metric, ylabel, fname):
         ax.set_title(cond)
         ax.legend()
     fig.tight_layout()
-    fig.savefig(os.path.join(ROOT, 'results', fname), dpi=150)
+    fig.savefig(FIGURES / fname, dpi=150)
     plt.close(fig)
 
 
@@ -75,5 +86,5 @@ for cond in CONDS:
             f = lambda x: '-' if x is None else '%.1f' % x
             lines.append('| %s | %s | %d | %d/%d | %s | %s | %s | %s |' % (
                 mode, cond, n, s['ok'], s['total'], f(s['mean']), f(s['min']), f(s['max']), f(s['mbps'])))
-open(os.path.join(ROOT, 'results', 'summary.md'), 'w').write('\n'.join(lines) + '\n')
+(REPORTS / 'summary.md').write_text('\n'.join(lines) + '\n')
 print('\n'.join(lines))

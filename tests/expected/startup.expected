@@ -1,4 +1,0 @@
-Controller terminal after starting the controller, the topology and the three servers:
-    heartbeat listener on port 9000
-    switch 1 connected   (also 2, 3 and 4, in any order)
-    server srv1 is UP (last heartbeat <1 s ago)   (also srv2 and srv3)

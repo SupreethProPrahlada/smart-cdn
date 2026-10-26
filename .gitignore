@@ -1,4 +1,7 @@
 content/*.bin
 results/raw.csv
+results/data/client-transfers.csv
 *.save
 __pycache__/
+AGENTS.md
+.venv/

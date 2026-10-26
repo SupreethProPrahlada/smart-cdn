@@ -1,7 +1,0 @@
-Test: source tests/checksum.cmd   (controller in dynamic mode)
-
-First client line (20 MB):
-    10.0.0.1 got 20971520 bytes in <1 to 4>s, retries=0 checksum=OK
-Second client line (100 MB, a failover only happens if it started on srv1):
-    10.0.0.1 got 104857600 bytes in <10 to 50>s, retries=<0 or more> checksum=OK
-checksum=MISMATCH anywhere is a bug.

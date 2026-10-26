@@ -1,0 +1,17 @@
+[project]
+name = "smart-cdn"
+version = "0.1.0"
+description = "TCP content delivery over a Mininet SDN topology"
+requires-python = "==3.9.*"
+dependencies = [
+    "matplotlib",
+    "mininet @ git+https://github.com/mininet/mininet.git@d7f399d7a1200b602bd6a95ae88bae1009664d4a",
+    "pbr",
+    "ryu @ git+https://github.com/faucetsdn/ryu.git@d6cda4f427ff8de82b94c58aa826824a106014c2",
+    "setuptools<58",
+    "wheel<0.45",
+]
+
+[tool.uv]
+package = false
+no-build-isolation-package = ["ryu"]
