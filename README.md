@@ -1,6 +1,6 @@
 # Smart Content Delivery System
 
-A raw TCP content service that uses a Ryu SDN controller to select among three servers in Mininet. The controller considers server health, reported load, configured path delay, and measured link utilization.
+A raw TCP content service that uses a Ryu SDN controller to select among three servers in Mininet. The controller considers server health, reported load, configured path delay, and measured link utilization. The experiment runner uses six distinct client hosts (c1-c6); c7 is reserved for congestion traffic.
 
 ## Requirements and setup
 
@@ -46,7 +46,8 @@ uv run python tests/run_scenarios.py all
 ```
 
 The runner re-launches itself with `sudo` when needed. For one scenario,
-replace `all` with `smoke`, `failover`, or `congestion`. The smoke scenario
+replace `all` with `smoke`, `six-client-smoke`, `failover`, or `congestion`. The six-client
+smoke starts one download on each of c1-c6 at the same time. The smoke scenario
 verifies downloads and prints the installed CDN flow rules. Run failover in
 dynamic mode: after a server stops sending heartbeats, the controller waits
 up to 10 seconds to mark it down and sends new connections to a healthy server.

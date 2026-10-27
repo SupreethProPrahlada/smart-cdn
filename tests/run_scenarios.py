@@ -27,8 +27,8 @@ CLIENT_COUNTS = (1, 3, 6)
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=("smoke", "failover", "congestion", "all",
-                                              "experiments", "report"))
+    parser.add_argument("scenario", choices=("smoke", "six-client-smoke", "failover",
+                                              "congestion", "all", "experiments", "report"))
     parser.add_argument("--mode", choices=("dynamic", "static"), default="dynamic",
                         help="must match the running controller")
     parser.add_argument("--file", default="exp.bin", help="content file to request")
@@ -58,7 +58,8 @@ class ScenarioRunner:
         self.filename = filename
         self.net = build()
         self.servers = {name: self.net.get(name) for name in ("srv1", "srv2", "srv3")}
-        self.clients = [self.net.get(name) for name in ("c1", "c2", "c3")]
+        self.clients = [self.net.get(f"c{i}") for i in range(1, 7)]
+        self.load_sink = self.net.get("c7")
         self.procs = {}
 
     def start(self):
@@ -121,6 +122,14 @@ class ScenarioRunner:
         print(output.strip())
         return result
 
+    def six_client_smoke(self):
+        rows = self.run_clients(6)
+        for name, elapsed, mbps, retries, status in rows:
+            print(f"{name}: {status}, {elapsed:.2f}s, {mbps:.2f} Mbit/s, retries={retries}")
+        expected = [f"c{i}" for i in range(1, 7)]
+        if [row[0] for row in rows] != expected or any(row[4] != "ok" for row in rows):
+            raise RuntimeError("six-client smoke did not complete successfully on c1-c6")
+
     def smoke(self):
         self.download(self.clients[0], "small.bin")
         self.download(self.clients[1], "small.bin")
@@ -147,12 +156,11 @@ class ScenarioRunner:
         self.start_server("srv1")
 
     def congestion(self):
-        c4 = self.net.get("c4")
         server = self.servers["srv1"]
-        self.procs["iperf_server"] = c4.popen(["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
+        self.procs["iperf_server"] = self.load_sink.popen(["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
         time.sleep(1)
         self.procs["iperf_client"] = server.popen(
-            ["iperf", "-c", "10.0.0.4", "-t", "30", "-P", "4"],
+            ["iperf", "-c", "10.0.0.7", "-t", "30", "-P", "4"],
             stdout=DEVNULL, stderr=DEVNULL,
         )
         time.sleep(3)
@@ -191,9 +199,11 @@ class ScenarioRunner:
                 self.clear_condition(condition)
 
     def run_clients(self, count):
+        if count < 1 or count > len(self.clients):
+            raise ValueError(f"client count must be between 1 and {len(self.clients)}, got {count}")
         jobs = []
         for index in range(count):
-            host = self.clients[index % len(self.clients)]
+            host = self.clients[index]
             jobs.append((host.name, self.client(host), time.monotonic()))
         rows = []
         for name, process, started in jobs:
@@ -208,11 +218,10 @@ class ScenarioRunner:
 
     def set_condition(self, condition):
         if condition == "congested":
-            c4 = self.net.get("c4")
-            self.procs["iperf_server"] = c4.popen(["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
+            self.procs["iperf_server"] = self.load_sink.popen(["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
             time.sleep(1)
             self.procs["iperf_client"] = self.servers["srv1"].popen(
-                ["iperf", "-c", "10.0.0.4", "-t", "3600", "-P", "4"],
+                ["iperf", "-c", "10.0.0.7", "-t", "3600", "-P", "4"],
                 stdout=DEVNULL, stderr=DEVNULL,
             )
             time.sleep(8)
@@ -251,6 +260,8 @@ def main():
         runner.start()
         if args.scenario == "smoke":
             runner.smoke()
+        elif args.scenario == "six-client-smoke":
+            runner.six_client_smoke()
         elif args.scenario == "failover":
             runner.failover()
         elif args.scenario == "congestion":

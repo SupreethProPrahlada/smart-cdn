@@ -2,11 +2,11 @@
 
 ## Network
 
-    c1-c4 ---- s1 ---- 5 ms / 100 Mbps ---- srv1
+    c1-c6 ---- s1 ---- 5 ms / 100 Mbps ---- srv1
                     ---- 20 ms / 50 Mbps --- srv2
                     ---- 50 ms / 10 Mbps --- srv3
 
-Ryu controls the four OpenFlow 1.3 switches. Clients request the virtual address `10.0.0.100:8000`; no host owns that address. The controller answers its ARP requests and rewrites each new TCP flow to a selected server. A root namespace interface connects the controller host to `s1` at `10.0.0.254`; servers send status heartbeats to that address on TCP port 9000.
+Ryu controls the four OpenFlow 1.3 switches. Clients request the virtual address `10.0.0.100:8000`; no host owns that address. The controller answers its ARP requests and rewrites each new TCP flow to a selected server. A root namespace interface connects the controller host to `s1` at `10.0.0.254`; servers send status heartbeats to that address on TCP port 9000. Experiments run up to six separate client hosts (`c1`-`c6`) concurrently; `c7` is reserved as the iperf congestion sink.
 
 Addresses and ports are listed in `config/settings.md`.
 

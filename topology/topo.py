@@ -39,6 +39,14 @@ def build():
     heartbeat_host = net.addHost('hb', ip='10.0.0.254/24',
                                  mac='00:00:00:00:00:fe', inNamespace=False)
     net.addLink(heartbeat_host, s1)
+
+    # Keep these links after the server-path links so s1 server ports stay unchanged.
+    # Six separate experiment clients; c7 is reserved for congestion traffic.
+    for i in range(5, 8):
+        client = net.addHost(f'c{i}', ip=f'10.0.0.{i}/24',
+                             mac=f'00:00:00:00:00:0{i}')
+        net.addLink(client, s1, bw=100)
+
     return net
 
 if __name__ == '__main__':
