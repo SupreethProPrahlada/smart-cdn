@@ -13,6 +13,10 @@ from mininet.log import setLogLevel
 # first so the documented `python3` commands in the Mininet CLI use this env.
 os.environ['PATH'] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')
 
+# srv1's direct s1-s2 link; tests/run_scenarios.py degrades and restores it.
+DIRECT_LINK = dict(delay='5ms', bw=100)
+DEGRADED_LINK = dict(delay='100ms', bw=100)
+
 def build():
     net = Mininet(controller=None, switch=OVSSwitch, link=TCLink)
     net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6653)
@@ -31,7 +35,7 @@ def build():
         net.addLink(h, sw, bw=100)
 
     # path quality: this is what the controller chooses between
-    net.addLink(s1, s2, delay='5ms',  bw=100)
+    net.addLink(s1, s2, **DIRECT_LINK)
     net.addLink(s1, s3, delay='20ms', bw=50)
     net.addLink(s1, s4, delay='50ms', bw=10)
 
@@ -46,6 +50,12 @@ def build():
         client = net.addHost(f'c{i}', ip=f'10.0.0.{i}/24',
                              mac=f'00:00:00:00:00:0{i}')
         net.addLink(client, s1, bw=100)
+
+    # Backup route to srv1: s1 port 12 - s5 - s2 port 3 (15 ms instead of 5 ms).
+    # Port numbers match controller/paths.py.
+    s5 = net.addSwitch('s5', protocols='OpenFlow13')
+    net.addLink(s1, s5, port1=12, port2=1, delay='10ms', bw=100)
+    net.addLink(s5, s2, port1=2, port2=3, delay='5ms', bw=100)
 
     return net
 

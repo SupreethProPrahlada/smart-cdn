@@ -1,18 +1,20 @@
-"""Track server health and choose the lowest-cost healthy server."""
+"""Track server health and choose the lowest-cost healthy route."""
 
 import socket
 import time
 
 from ryu.lib import hub
 
+from paths import ROUTES
 
-PATH_DELAY_MS = {"srv1": 5, "srv2": 20, "srv3": 50}
+
+SERVERS = ("srv1", "srv2", "srv3")
 SERVER_IPS = {
     "10.0.0.11": "srv1",
     "10.0.0.12": "srv2",
     "10.0.0.13": "srv3",
 }
-MAX_DELAY_MS = 50.0
+MAX_RTT = 0.1            # seconds: round trip of the slowest healthy route (srv3)
 MAX_CONNECTIONS = 10.0
 DELAY_WEIGHT = 0.4
 UTILIZATION_WEIGHT = 0.4
@@ -25,7 +27,6 @@ class Selector:
         self.log = logger
         self.last_seen = {}
         self.active = {}
-        self.util = {name: 0.0 for name in PATH_DELAY_MS}
         self.was_healthy = {}
         self.on_down = None
         hub.spawn(self._listen, port)
@@ -55,7 +56,7 @@ class Selector:
             parts = data.decode(errors="ignore").split()
             if len(parts) > 1:
                 parts[1] = SERVER_IPS.get(parts[1], parts[1])
-            if len(parts) >= 3 and parts[0] == "STATUS" and parts[1] in PATH_DELAY_MS:
+            if len(parts) >= 3 and parts[0] == "STATUS" and parts[1] in SERVERS:
                 if parts[1] not in self.last_seen:
                     self.log.info("received first heartbeat from %s", parts[1])
                 self.last_seen[parts[1]] = time.time()
@@ -69,7 +70,7 @@ class Selector:
 
     def _watch(self):
         while True:
-            for name in PATH_DELAY_MS:
+            for name in SERVERS:
                 healthy = self.healthy(name)
                 if self.was_healthy.get(name) == healthy:
                     continue
@@ -85,13 +86,18 @@ class Selector:
     def healthy(self, name):
         return time.time() - self.last_seen.get(name, 0) < HEARTBEAT_TIMEOUT
 
-    def cost(self, name):
-        delay = PATH_DELAY_MS[name] / MAX_DELAY_MS
-        utilization = self.util[name]
-        load = min(self.active.get(name, 0) / MAX_CONNECTIONS, 1.0)
-        return (DELAY_WEIGHT * delay + UTILIZATION_WEIGHT * utilization
+    def cost(self, route):
+        delay = min(route.rtt / MAX_RTT, 1.0)
+        load = min(self.active.get(route.server, 0) / MAX_CONNECTIONS, 1.0)
+        return (DELAY_WEIGHT * delay + UTILIZATION_WEIGHT * route.util
                 + LOAD_WEIGHT * load)
 
     def pick(self):
-        healthy = [name for name in PATH_DELAY_MS if self.healthy(name)]
-        return min(healthy, key=self.cost) if healthy else None
+        """Lowest-cost route to any healthy server, for a new client flow."""
+        usable = [route for route in ROUTES if route.up and self.healthy(route.server)]
+        return min(usable, key=self.cost) if usable else None
+
+    def best_route(self, server):
+        """Lowest-delay working route to one server, for moving an existing flow."""
+        usable = [route for route in ROUTES if route.server == server and route.up]
+        return min(usable, key=lambda route: route.rtt) if usable else None

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "topology"))
 
 from mininet.log import setLogLevel
-from topo import build
+from topo import DEGRADED_LINK, DIRECT_LINK, build
 
 
 RESULTS = ROOT / "results"
@@ -23,11 +23,13 @@ DATA = RESULTS / "data"
 RESULT_LINE = re.compile(r"got (\d+) bytes in ([0-9.]+)s, retries=(\d+) checksum=(\w+)")
 CONDITIONS = ("normal", "congested", "failed")
 CLIENT_COUNTS = (1, 3, 6)
+# s1 ports of srv1's two routes (see controller/paths.py)
+DIRECT_PORT, BACKUP_PORT = 5, 12
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=("smoke", "six-client-smoke", "failover",
+    parser.add_argument("scenario", choices=("smoke", "six-client-smoke", "failover", "path",
                                               "congestion", "all", "experiments", "report"))
     parser.add_argument("--mode", choices=("dynamic", "static"), default="dynamic",
                         help="must match the running controller")
@@ -155,6 +157,84 @@ class ScenarioRunner:
         print("Restarting srv1 to demonstrate recovery")
         self.start_server("srv1")
 
+    def path(self):
+        """Fail, then degrade, srv1's direct path during a download, restoring it each time."""
+        client = self.clients[0]
+        self.path_change(client, "failure", lambda: self.net.configLinkStatus("s1", "s2", "down"))
+        self.net.configLinkStatus("s1", "s2", "up")
+        self.path_recovered(client)
+        self.path_change(client, "degradation", lambda: self.set_direct_link(**DEGRADED_LINK))
+        self.set_direct_link(**DIRECT_LINK)
+        self.path_recovered(client)
+
+    def path_change(self, host, label, change):
+        started = time.monotonic()
+        process = self.client(host, "video2.bin")
+        port, tcp_port, _ = self.route_rule(host, started)
+        if port != DIRECT_PORT:
+            process.kill()
+            raise RuntimeError(f"{host.name} was steered to s1 port {port}, not srv1's direct path")
+        time.sleep(2)
+        print(f"{host.name} is downloading over srv1's direct path; applying path {label}")
+        change()
+        output = process.communicate()[0].decode(errors="replace")
+        print(output.strip())
+        result = parse_client_output(output)
+        if process.returncode or not result or result[3] != "OK":
+            raise RuntimeError(f"download failed after path {label}: {output.strip()!r}")
+        port, _, rule = self.route_rule(host, started, tcp_port)
+        print(f"s1 rule: {rule}")
+        if port != BACKUP_PORT:
+            raise RuntimeError(f"controller did not move the flow to the backup path (port {port})")
+        if result[2]:
+            raise RuntimeError(f"client reconnected {result[2]} times instead of keeping its connection")
+        print(f"Path {label}: flow moved to the backup path on the same TCP connection")
+
+    def path_recovered(self, host):
+        # Probes need a few rounds to show the direct path is up and fast again.
+        time.sleep(8)
+        started = time.monotonic()
+        self.download(host, "small.bin")
+        port, _, rule = self.route_rule(host, started)
+        print(f"s1 rule: {rule}")
+        if port != DIRECT_PORT:
+            raise RuntimeError(f"new connections did not return to srv1's direct path (port {port})")
+        print("Path recovered: new connections use srv1's direct path again")
+
+    def set_direct_link(self, **params):
+        """Reconfigure tc on both ends of srv1's direct s1-s2 link."""
+        link = self.net.linksBetween(self.net.get("s1"), self.net.get("s2"))[0]
+        for intf in (link.intf1, link.intf2):
+            intf.config(**params)
+
+    def route_rule(self, host, since, tcp_port=None, timeout=5):
+        """Find the host's newest CDN flow rule on s1.
+
+        Only rules installed (or last rewritten) after `since` count; `tcp_port`
+        selects one connection. Returns (output port, client TCP port, rule text).
+        """
+        pattern = re.compile(rf"nw_src={re.escape(host.IP())},nw_dst=10\.0\.0\.100,tp_src=(\d+),")
+        deadline = time.monotonic() + timeout
+        while True:
+            rules = self.net.get("s1").cmd("ovs-ofctl -O OpenFlow13 --no-names dump-flows s1")
+            newest = None
+            for line in rules.splitlines():
+                match = pattern.search(line)
+                if not match or tcp_port not in (None, int(match.group(1))):
+                    continue
+                age = float(re.search(r"duration=([0-9.]+)s", line).group(1))
+                if age > time.monotonic() - since:
+                    continue
+                if newest is None or age < newest[0]:
+                    newest = (age, int(match.group(1)), line.strip())
+            if newest or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        if newest is None:
+            return None, None, None
+        _, tcp_port, line = newest
+        return int(re.search(r"output:(\d+)", line).group(1)), tcp_port, line
+
     def congestion(self):
         server = self.servers["srv1"]
         self.procs["iperf_server"] = self.load_sink.popen(["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
@@ -264,12 +344,15 @@ def main():
             runner.six_client_smoke()
         elif args.scenario == "failover":
             runner.failover()
+        elif args.scenario == "path":
+            runner.path()
         elif args.scenario == "congestion":
             runner.congestion()
         elif args.scenario == "all":
             runner.failover()
             time.sleep(2)
             runner.smoke()
+            runner.path()
             runner.congestion()
         else:
             runner.experiments(args.mode, args.quick, args.only)
