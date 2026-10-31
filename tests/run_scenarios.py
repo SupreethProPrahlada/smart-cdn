@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument("--file", default="exp.bin", help="content file to request")
     parser.add_argument("--quick", action="store_true", help="run one repetition with up to 3 clients")
     parser.add_argument("--only", choices=CONDITIONS, help="run one experiment condition")
+    parser.add_argument("--seed", type=int, help="replay a random-congestion run")
     return parser.parse_args()
 
 
@@ -58,8 +59,9 @@ def parse_client_output(output):
 
 
 class ScenarioRunner:
-    def __init__(self, filename):
+    def __init__(self, filename, seed=None):
         self.filename = filename
+        self.seed = seed
         self.net = build()
         self.servers = {name: self.net.get(name) for name in ("srv1", "srv2", "srv3")}
         self.clients = [self.net.get(f"c{i}") for i in range(1, 7)]
@@ -281,9 +283,11 @@ class ScenarioRunner:
         print("Verified: new flow returned to the direct route after load cleared.")
 
     def random_congestion(self):
-        """Randomly load one server route or leave the network unloaded."""
-        congested = random.choice((None, 'srv1', 'srv2', 'srv3'))
-        print(f'Realized condition: {congested or "no congestion"}.')
+        """Load one random server path or none, then record the decision and result."""
+        congested = random.choice((None, "srv1", "srv2", "srv3"))
+        condition = congested or "none"
+        print(f"Random seed: {self.seed}")
+        print(f"Realized condition: {condition}.")
         if congested is not None:
             self.procs["random_iperf_server"] = self.load_sink.popen(
                 ["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
@@ -291,24 +295,53 @@ class ScenarioRunner:
             self.procs["random_iperf_client"] = self.servers[congested].popen(
                 ["iperf", "-c", "10.0.0.7", "-t", "60", "-P", "4"],
                 stdout=DEVNULL, stderr=DEVNULL)
-            time.sleep(8)  # let OpenFlow port counters report the load
+            time.sleep(8)  # allow port counters to observe the generated load
 
         try:
             started = time.monotonic()
-            self.download(self.clients[0], "small.bin")
+            result = self.download(self.clients[0], "small.bin")
             port, _, rule = self.route_rule(self.clients[0], started)
+            routes = {5: ("srv1", "srv1-direct"), 12: ("srv1", "srv1-backup"),
+                      6: ("srv2", "srv2"), 7: ("srv3", "srv3")}
+            selected, route_name = routes.get(port, ("unknown", "unknown"))
+            passed = congested is None or selected != congested
             print(f"Selected s1 rule: {rule}")
-            port_server = {5: 'srv1', 12: 'srv1', 6: 'srv2', 7: 'srv3'}.get(port)
-            if port_server is None:
-                raise RuntimeError(f"could not map selected output port {port} to a server")
-            print(f"Controller selected {port_server} (s1 output port {port}).")
-            if congested is not None and port_server == congested:
+            print(f"Controller selected {selected} via {route_name} (s1 port {port}).")
+
+            output = DATA / "random_congestion.csv"
+            DATA.mkdir(parents=True, exist_ok=True)
+            columns = ("seed", "condition", "congested_server", "selected_server",
+                       "selected_route", "s1_port", "bytes", "time_s", "retries",
+                       "checksum", "status")
+            write_header = not output.exists() or output.stat().st_size == 0
+            with output.open("a", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=columns)
+                if write_header:
+                    writer.writeheader()
+                writer.writerow({
+                    "seed": self.seed,
+                    "condition": condition,
+                    "congested_server": congested or "none",
+                    "selected_server": selected,
+                    "selected_route": route_name,
+                    "s1_port": "" if port is None else port,
+                    "bytes": result[0],
+                    "time_s": result[1],
+                    "retries": result[2],
+                    "checksum": result[3],
+                    "status": "pass" if passed and result[3] == "OK" else "fail",
+                })
+            print(f"Recorded run in {output.relative_to(ROOT)}")
+
+            if result[3] != "OK":
+                raise RuntimeError("download checksum failed")
+            if not passed:
                 raise RuntimeError(
                     f"controller selected congested {congested}; expected another healthy server")
             if congested is None:
-                print("No congestion was generated; selection reflects the measured baseline costs.")
+                print("Verified baseline selection with no generated congestion.")
             else:
-                print(f"Verified: congestion on {congested} caused a new flow to use {port_server}.")
+                print(f"Verified: congestion on {congested} sent the new flow to {selected}.")
         finally:
             self.stop_process("random_iperf_client")
             self.stop_process("random_iperf_server")
@@ -413,7 +446,10 @@ def main():
 
     prepare_content()
     setLogLevel("warning")
-    runner = ScenarioRunner(args.file)
+    if args.scenario == "random-congestion":
+        args.seed = args.seed if args.seed is not None else random.randrange(1 << 32)
+        random.seed(args.seed)
+    runner = ScenarioRunner(args.file, seed=args.seed)
     try:
         runner.start()
         if args.scenario == "smoke":

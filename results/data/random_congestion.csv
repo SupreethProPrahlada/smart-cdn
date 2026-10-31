@@ -1,0 +1,5 @@
+seed,condition,congested_server,selected_server,selected_route,s1_port,bytes,time_s,retries,checksum,status
+42,srv3,srv3,srv1,srv1-direct,5,2097152,0.43,0,OK,pass
+43,none,none,srv1,srv1-direct,5,2097152,0.3,0,OK,pass
+44,srv3,srv3,srv1,srv1-direct,5,2097152,0.27,0,OK,pass
+45,srv2,srv2,srv1,srv1-direct,5,2097152,0.25,0,OK,pass
