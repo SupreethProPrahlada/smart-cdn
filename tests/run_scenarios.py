@@ -4,6 +4,7 @@
 import argparse
 import csv
 import os
+import random
 import re
 import socket
 import sys
@@ -30,12 +31,14 @@ DIRECT_PORT, BACKUP_PORT = 5, 12
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenario", choices=("smoke", "six-client-smoke", "failover", "path",
-                                              "congestion", "all", "experiments", "report"))
+                                              "adaptive-congestion", "random-congestion", "congestion", "all",
+                                              "experiments", "report"))
     parser.add_argument("--mode", choices=("dynamic", "static"), default="dynamic",
                         help="must match the running controller")
     parser.add_argument("--file", default="exp.bin", help="content file to request")
     parser.add_argument("--quick", action="store_true", help="run one repetition with up to 3 clients")
     parser.add_argument("--only", choices=CONDITIONS, help="run one experiment condition")
+    parser.add_argument("--seed", type=int, help="replay a random-congestion run")
     return parser.parse_args()
 
 
@@ -56,12 +59,14 @@ def parse_client_output(output):
 
 
 class ScenarioRunner:
-    def __init__(self, filename):
+    def __init__(self, filename, seed=None):
         self.filename = filename
+        self.seed = seed
         self.net = build()
         self.servers = {name: self.net.get(name) for name in ("srv1", "srv2", "srv3")}
         self.clients = [self.net.get(f"c{i}") for i in range(1, 7)]
         self.load_sink = self.net.get("c7")
+        self.load_source = self.net.get("loadsrc")
         self.procs = {}
 
     def start(self):
@@ -235,6 +240,112 @@ class ScenarioRunner:
         _, tcp_port, line = newest
         return int(re.search(r"output:(\d+)", line).group(1)), tcp_port, line
 
+    def adaptive_congestion(self):
+        """Verify direct, loaded-backup, then direct selection with both routes up."""
+        client = self.clients[0]
+        print("No background load: a fresh c1 flow should use the direct route.")
+        started = time.monotonic()
+        self.download(client, "small.bin")
+        port, _, rule = self.route_rule(client, started)
+        print(f"s1 rule: {rule}")
+        if port != DIRECT_PORT:
+            raise RuntimeError(f"unloaded srv1 flow used s1 port {port}, expected {DIRECT_PORT}")
+
+        self.procs["adaptive_iperf_server"] = self.load_sink.popen(
+            ["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
+        time.sleep(1)
+        self.procs["adaptive_iperf_client"] = self.load_source.popen(
+            ["iperf", "-c", "10.0.0.7", "-t", "60", "-P", "4"],
+            stdout=DEVNULL, stderr=DEVNULL)
+        try:
+            time.sleep(8)  # wait for route port counters to record direct-trunk load
+            print("Direct s1-s2 trunk is loaded; a new c1 flow should use the backup.")
+            started = time.monotonic()
+            self.download(client, "video1.bin")
+            port, _, rule = self.route_rule(client, started)
+            print(f"s1 rule: {rule}")
+            if port != BACKUP_PORT:
+                raise RuntimeError(
+                    f"loaded srv1 flow used s1 port {port}, expected backup port {BACKUP_PORT}")
+            print("Verified: new flow used srv1's backup path while both routes stayed up.")
+        finally:
+            self.stop_process("adaptive_iperf_client")
+            self.stop_process("adaptive_iperf_server")
+
+        time.sleep(6)  # let fresh port counters show that the load has cleared
+        print("Load stopped: a fresh c1 flow should return to the direct route.")
+        started = time.monotonic()
+        self.download(client, "small.bin")
+        port, _, rule = self.route_rule(client, started)
+        print(f"s1 rule: {rule}")
+        if port != DIRECT_PORT:
+            raise RuntimeError(f"unloaded srv1 flow used s1 port {port}, expected {DIRECT_PORT}")
+        print("Verified: new flow returned to the direct route after load cleared.")
+
+    def random_congestion(self):
+        """Load one random server path or none, then record the decision and result."""
+        congested = random.choice((None, "srv1", "srv2", "srv3"))
+        condition = congested or "none"
+        print(f"Random seed: {self.seed}")
+        print(f"Realized condition: {condition}.")
+        if congested is not None:
+            self.procs["random_iperf_server"] = self.load_sink.popen(
+                ["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
+            time.sleep(1)
+            self.procs["random_iperf_client"] = self.servers[congested].popen(
+                ["iperf", "-c", "10.0.0.7", "-t", "60", "-P", "4"],
+                stdout=DEVNULL, stderr=DEVNULL)
+            time.sleep(8)  # allow port counters to observe the generated load
+
+        try:
+            started = time.monotonic()
+            result = self.download(self.clients[0], "small.bin")
+            port, _, rule = self.route_rule(self.clients[0], started)
+            routes = {5: ("srv1", "srv1-direct"), 12: ("srv1", "srv1-backup"),
+                      6: ("srv2", "srv2"), 7: ("srv3", "srv3")}
+            selected, route_name = routes.get(port, ("unknown", "unknown"))
+            passed = congested is None or selected != congested
+            print(f"Selected s1 rule: {rule}")
+            print(f"Controller selected {selected} via {route_name} (s1 port {port}).")
+
+            output = DATA / "random_congestion.csv"
+            DATA.mkdir(parents=True, exist_ok=True)
+            columns = ("seed", "condition", "congested_server", "selected_server",
+                       "selected_route", "s1_port", "bytes", "time_s", "retries",
+                       "checksum", "status")
+            write_header = not output.exists() or output.stat().st_size == 0
+            with output.open("a", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=columns)
+                if write_header:
+                    writer.writeheader()
+                writer.writerow({
+                    "seed": self.seed,
+                    "condition": condition,
+                    "congested_server": congested or "none",
+                    "selected_server": selected,
+                    "selected_route": route_name,
+                    "s1_port": "" if port is None else port,
+                    "bytes": result[0],
+                    "time_s": result[1],
+                    "retries": result[2],
+                    "checksum": result[3],
+                    "status": "pass" if passed and result[3] == "OK" else "fail",
+                })
+            print(f"Recorded run in {output.relative_to(ROOT)}")
+
+            if result[3] != "OK":
+                raise RuntimeError("download checksum failed")
+            if not passed:
+                raise RuntimeError(
+                    f"controller selected congested {congested}; expected another healthy server")
+            if congested is None:
+                print("Verified baseline selection with no generated congestion.")
+            else:
+                print(f"Verified: congestion on {congested} sent the new flow to {selected}.")
+        finally:
+            self.stop_process("random_iperf_client")
+            self.stop_process("random_iperf_server")
+
     def congestion(self):
         server = self.servers["srv1"]
         self.procs["iperf_server"] = self.load_sink.popen(["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
@@ -335,7 +446,10 @@ def main():
 
     prepare_content()
     setLogLevel("warning")
-    runner = ScenarioRunner(args.file)
+    if args.scenario == "random-congestion":
+        args.seed = args.seed if args.seed is not None else random.randrange(1 << 32)
+        random.seed(args.seed)
+    runner = ScenarioRunner(args.file, seed=args.seed)
     try:
         runner.start()
         if args.scenario == "smoke":
@@ -346,6 +460,10 @@ def main():
             runner.failover()
         elif args.scenario == "path":
             runner.path()
+        elif args.scenario == "adaptive-congestion":
+            runner.adaptive_congestion()
+        elif args.scenario == "random-congestion":
+            runner.random_congestion()
         elif args.scenario == "congestion":
             runner.congestion()
         elif args.scenario == "all":
