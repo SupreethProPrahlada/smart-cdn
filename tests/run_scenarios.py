@@ -4,6 +4,7 @@
 import argparse
 import csv
 import os
+import random
 import re
 import socket
 import sys
@@ -30,7 +31,8 @@ DIRECT_PORT, BACKUP_PORT = 5, 12
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenario", choices=("smoke", "six-client-smoke", "failover", "path",
-                                              "congestion", "all", "experiments", "report"))
+                                              "adaptive-congestion", "random-congestion", "congestion", "all",
+                                              "experiments", "report"))
     parser.add_argument("--mode", choices=("dynamic", "static"), default="dynamic",
                         help="must match the running controller")
     parser.add_argument("--file", default="exp.bin", help="content file to request")
@@ -62,6 +64,7 @@ class ScenarioRunner:
         self.servers = {name: self.net.get(name) for name in ("srv1", "srv2", "srv3")}
         self.clients = [self.net.get(f"c{i}") for i in range(1, 7)]
         self.load_sink = self.net.get("c7")
+        self.load_source = self.net.get("loadsrc")
         self.procs = {}
 
     def start(self):
@@ -235,6 +238,81 @@ class ScenarioRunner:
         _, tcp_port, line = newest
         return int(re.search(r"output:(\d+)", line).group(1)), tcp_port, line
 
+    def adaptive_congestion(self):
+        """Verify direct, loaded-backup, then direct selection with both routes up."""
+        client = self.clients[0]
+        print("No background load: a fresh c1 flow should use the direct route.")
+        started = time.monotonic()
+        self.download(client, "small.bin")
+        port, _, rule = self.route_rule(client, started)
+        print(f"s1 rule: {rule}")
+        if port != DIRECT_PORT:
+            raise RuntimeError(f"unloaded srv1 flow used s1 port {port}, expected {DIRECT_PORT}")
+
+        self.procs["adaptive_iperf_server"] = self.load_sink.popen(
+            ["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
+        time.sleep(1)
+        self.procs["adaptive_iperf_client"] = self.load_source.popen(
+            ["iperf", "-c", "10.0.0.7", "-t", "60", "-P", "4"],
+            stdout=DEVNULL, stderr=DEVNULL)
+        try:
+            time.sleep(8)  # wait for route port counters to record direct-trunk load
+            print("Direct s1-s2 trunk is loaded; a new c1 flow should use the backup.")
+            started = time.monotonic()
+            self.download(client, "video1.bin")
+            port, _, rule = self.route_rule(client, started)
+            print(f"s1 rule: {rule}")
+            if port != BACKUP_PORT:
+                raise RuntimeError(
+                    f"loaded srv1 flow used s1 port {port}, expected backup port {BACKUP_PORT}")
+            print("Verified: new flow used srv1's backup path while both routes stayed up.")
+        finally:
+            self.stop_process("adaptive_iperf_client")
+            self.stop_process("adaptive_iperf_server")
+
+        time.sleep(6)  # let fresh port counters show that the load has cleared
+        print("Load stopped: a fresh c1 flow should return to the direct route.")
+        started = time.monotonic()
+        self.download(client, "small.bin")
+        port, _, rule = self.route_rule(client, started)
+        print(f"s1 rule: {rule}")
+        if port != DIRECT_PORT:
+            raise RuntimeError(f"unloaded srv1 flow used s1 port {port}, expected {DIRECT_PORT}")
+        print("Verified: new flow returned to the direct route after load cleared.")
+
+    def random_congestion(self):
+        """Randomly load one server route or leave the network unloaded."""
+        congested = random.choice((None, 'srv1', 'srv2', 'srv3'))
+        print(f'Realized condition: {congested or "no congestion"}.')
+        if congested is not None:
+            self.procs["random_iperf_server"] = self.load_sink.popen(
+                ["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
+            time.sleep(1)
+            self.procs["random_iperf_client"] = self.servers[congested].popen(
+                ["iperf", "-c", "10.0.0.7", "-t", "60", "-P", "4"],
+                stdout=DEVNULL, stderr=DEVNULL)
+            time.sleep(8)  # let OpenFlow port counters report the load
+
+        try:
+            started = time.monotonic()
+            self.download(self.clients[0], "small.bin")
+            port, _, rule = self.route_rule(self.clients[0], started)
+            print(f"Selected s1 rule: {rule}")
+            port_server = {5: 'srv1', 12: 'srv1', 6: 'srv2', 7: 'srv3'}.get(port)
+            if port_server is None:
+                raise RuntimeError(f"could not map selected output port {port} to a server")
+            print(f"Controller selected {port_server} (s1 output port {port}).")
+            if congested is not None and port_server == congested:
+                raise RuntimeError(
+                    f"controller selected congested {congested}; expected another healthy server")
+            if congested is None:
+                print("No congestion was generated; selection reflects the measured baseline costs.")
+            else:
+                print(f"Verified: congestion on {congested} caused a new flow to use {port_server}.")
+        finally:
+            self.stop_process("random_iperf_client")
+            self.stop_process("random_iperf_server")
+
     def congestion(self):
         server = self.servers["srv1"]
         self.procs["iperf_server"] = self.load_sink.popen(["iperf", "-s"], stdout=DEVNULL, stderr=DEVNULL)
@@ -346,6 +424,10 @@ def main():
             runner.failover()
         elif args.scenario == "path":
             runner.path()
+        elif args.scenario == "adaptive-congestion":
+            runner.adaptive_congestion()
+        elif args.scenario == "random-congestion":
+            runner.random_congestion()
         elif args.scenario == "congestion":
             runner.congestion()
         elif args.scenario == "all":

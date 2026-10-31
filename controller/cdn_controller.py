@@ -35,6 +35,7 @@ COOKIE_L2, COOKIE_FLOW, COOKIE_BLOCK, COOKIE_PROBE = 1, 2, 3, 4
 
 
 MODE = os.environ.get('CDN_MODE', 'dynamic')   # dynamic or static
+PIN_SERVER = os.environ.get('CDN_PIN_SERVER')  # optional test-only server pin
 
 
 class Flow:
@@ -65,6 +66,12 @@ class CDN(app_manager.RyuApp):
         hub.spawn(self.monitor)
 
     def choose_route(self, client_ip):
+        if PIN_SERVER:
+            if not self.sel.healthy(PIN_SERVER):
+                return None
+            usable = [route for route in ROUTES
+                      if route.server == PIN_SERVER and route.up]
+            return min(usable, key=self.sel.cost) if usable else None
         if MODE == 'static':
             # fixed assignment on each server's first route:
             # c1->srv1, c2->srv2, c3->srv3, c4->srv1
