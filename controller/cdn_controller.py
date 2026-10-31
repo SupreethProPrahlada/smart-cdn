@@ -1,3 +1,4 @@
+import json
 import os
 import struct
 import sys
@@ -35,6 +36,10 @@ COOKIE_L2, COOKIE_FLOW, COOKIE_BLOCK, COOKIE_PROBE = 1, 2, 3, 4
 
 
 MODE = os.environ.get('CDN_MODE', 'dynamic')   # dynamic or static
+STATUS_FILE = os.environ.get(
+    'CDN_STATUS_FILE',
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 'results', 'live_routes.json'))
 PIN_SERVER = os.environ.get('CDN_PIN_SERVER')  # optional test-only server pin
 
 
@@ -60,6 +65,7 @@ class CDN(app_manager.RyuApp):
         self.prev = {}
         self.rates = {}
         self.flows = {}       # (client ip, client TCP port) -> Flow
+        self.last_route_event = None
         self.blocked = self.tree_blocked()
         self.seq = 0
         self.sel.on_down = self.flush_server
@@ -167,6 +173,9 @@ class CDN(app_manager.RyuApp):
                 self.logger.warning('no healthy route, dropping SYN from %s', ip.src)
                 return
             flow = self.flows[key] = Flow(ip.src, t.src_port, in_port, route)
+            self.last_route_event = {
+                'time': time.time(), 'client': ip.src,
+                'server': route.server, 'route': route.name}
             self.logger.info('flow %s:%d -> VIP steered to %s via %s',
                              ip.src, t.src_port, route.server, route.name)
         self.install(flow)
@@ -377,6 +386,29 @@ class CDN(app_manager.RyuApp):
                 self.move(flow, best, 'rtt %.0f ms vs %.0f ms' % (
                     route.rtt * 1000, best.rtt * 1000))
 
+    def publish_status(self):
+        """Publish a small atomic snapshot for the read-only terminal dashboard."""
+        routes = []
+        for route in ROUTES:
+            routes.append({
+                'name': route.name,
+                'server': route.server,
+                'server_up': self.sel.healthy(route.server),
+                'up': route.up,
+                'rtt_ms': None if route.rtt is None else round(route.rtt * 1000, 1),
+                'utilization': round(route.util, 3),
+                'active_flows': sum(1 for flow in self.flows.values()
+                                    if flow.route.name == route.name),
+            })
+        snapshot = {'updated_at': time.time(), 'mode': MODE, 'routes': routes,
+                    'last_route': self.last_route_event}
+        folder = os.path.dirname(STATUS_FILE)
+        os.makedirs(folder, exist_ok=True)
+        temporary = STATUS_FILE + '.tmp'
+        with open(temporary, 'w', encoding='utf-8') as stream:
+            json.dump(snapshot, stream)
+        os.replace(temporary, STATUS_FILE)
+
     def monitor(self):
         rounds = 0
         while True:
@@ -386,6 +418,10 @@ class CDN(app_manager.RyuApp):
                 dp.send_msg(ps.OFPPortStatsRequest(dp, 0, dp.ofproto.OFPP_ANY))
             hub.sleep(PROBE_INTERVAL)
             self.evaluate()
+            try:
+                self.publish_status()
+            except OSError as error:
+                self.logger.warning('could not publish route status: %s', error)
             rounds += 1
             if rounds % 5 == 0 and self.dps:
                 self.logger.info('routes: %s', ' | '.join(
