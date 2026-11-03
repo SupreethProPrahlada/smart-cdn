@@ -46,7 +46,8 @@ uv run python tests/run_scenarios.py all
 ```
 
 The runner re-launches itself with `sudo` when needed. For one scenario,
-replace `all` with `smoke`, `six-client-smoke`, `failover`, `path`, or `congestion`. The six-client
+replace `all` with `smoke`, `six-client-smoke`, `failover`, `path`, `adaptive-congestion`,
+`random-congestion`, or `congestion`. The six-client
 smoke starts one download on each of c1-c6 at the same time. The smoke scenario
 verifies downloads and prints the installed CDN flow rules. Run failover in
 dynamic mode: after a server stops sending heartbeats, the controller waits
@@ -98,6 +99,25 @@ The runner checks that Ryu's OpenFlow port `6653` and heartbeat port `9000`
 are both reachable on localhost before starting Mininet. If either port is
 unavailable, the runner exits with the controller start command instead of
 starting a scenario without a working controller.
+
+### Live route visualizer
+
+While the controller is running, serve the repository from its root in a third
+terminal (bind to localhost so the project files are not exposed to the LAN):
+
+```sh
+python3 -m http.server 8008 --bind 127.0.0.1
+```
+
+Open `http://127.0.0.1:8008/tools/route_map.html`. The page polls the
+controller's route snapshot once per second. Green routes are healthy and
+lightly used; amber/red indicate higher utilization; gray means down. The
+highlight and decision text show the latest new-flow selection or live-flow
+route move. `adaptive-congestion` demonstrates direct-to-backup-to-direct
+selection under load; `random-congestion --seed 1` is a repeatable run with
+srv1 congested. Fresh controller telemetry is shown even when every route is
+down; if the controller stops publishing, the page labels its cached view as
+the last active snapshot.
 
 ## Performance comparison
 

@@ -34,6 +34,10 @@ class Route:
         ports.update((hop.dpid, hop.to_client) for hop in self.hops[1:])
         return ports
 
+    def clear_switch_ports(self, dpid):
+        """Forget stale port-down reports when a switch reconnects."""
+        self.ports_down = {key for key in self.ports_down if key[0] != dpid}
+
     def trunk_ports(self):
         """Switch-to-switch ports, which can form loops for flooded traffic."""
         return self.ports() - {(self.hops[-1].dpid, self.hops[-1].to_server)}

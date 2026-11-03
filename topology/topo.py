@@ -57,6 +57,12 @@ def build():
     net.addLink(s1, s5, port1=12, port2=1, delay='10ms', bw=100)
     net.addLink(s5, s2, port1=2, port2=3, delay='5ms', bw=100)
 
+    # Cross-traffic source attached to s2. Traffic to c7 crosses only the
+    # direct s1-s2 trunk; it does not consume srv1's shared access link.
+    loadsrc = net.addHost('loadsrc', ip='10.0.0.8/24',
+                          mac='00:00:00:00:00:08')
+    net.addLink(loadsrc, s2, bw=100)
+
     return net
 
 if __name__ == '__main__':
