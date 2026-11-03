@@ -39,7 +39,14 @@ def parse_args():
     parser.add_argument("--quick", action="store_true", help="run one repetition with up to 3 clients")
     parser.add_argument("--only", choices=CONDITIONS, help="run one experiment condition")
     parser.add_argument("--seed", type=int, help="replay a random-congestion run")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.scenario == "adaptive-congestion" and args.mode != "dynamic":
+        parser.error("adaptive-congestion requires --mode dynamic")
+    return args
+
+
+def pick_congested_server(seed):
+    return random.Random(seed).choice((None, "srv1", "srv2", "srv3"))
 
 
 def prepare_content():
@@ -284,7 +291,7 @@ class ScenarioRunner:
 
     def random_congestion(self):
         """Load one random server path or none, then record the decision and result."""
-        congested = random.choice((None, "srv1", "srv2", "srv3"))
+        congested = pick_congested_server(self.seed)
         condition = congested or "none"
         print(f"Random seed: {self.seed}")
         print(f"Realized condition: {condition}.")
@@ -304,7 +311,7 @@ class ScenarioRunner:
             routes = {5: ("srv1", "srv1-direct"), 12: ("srv1", "srv1-backup"),
                       6: ("srv2", "srv2"), 7: ("srv3", "srv3")}
             selected, route_name = routes.get(port, ("unknown", "unknown"))
-            passed = congested is None or selected != congested
+            passed = selected != "unknown" and (congested is None or selected != congested)
             print(f"Selected s1 rule: {rule}")
             print(f"Controller selected {selected} via {route_name} (s1 port {port}).")
 
@@ -448,7 +455,6 @@ def main():
     setLogLevel("warning")
     if args.scenario == "random-congestion":
         args.seed = args.seed if args.seed is not None else random.randrange(1 << 32)
-        random.seed(args.seed)
     runner = ScenarioRunner(args.file, seed=args.seed)
     try:
         runner.start()

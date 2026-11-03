@@ -116,8 +116,8 @@ async function refresh() {
     const savedKey = 'smartCdnLastActiveSnapshot';
     let displayData = liveData;
     let showingSaved = false;
-    const hasActiveRoute = (liveData.routes || []).some(route => route.up && route.server_up);
-    if (hasActiveRoute) {
+    const liveAge = Math.max(0, (Date.now()/1000)-liveData.updated_at);
+    if (liveAge < 3) {
       localStorage.setItem(savedKey, JSON.stringify(liveData));
     } else {
       const saved = localStorage.getItem(savedKey);
@@ -151,12 +151,21 @@ async function refresh() {
     const cards = document.getElementById('cards'); cards.replaceChildren();
     for (const route of routes) {
       const card = document.createElement('article'); card.className='card'; card.style.borderLeftColor=colorFor(route);
+      const heading = document.createElement('h3'); heading.textContent = route.name;
+      card.appendChild(heading);
       const rtt = route.rtt_ms == null ? '—' : route.rtt_ms.toFixed(1)+' ms';
-      card.innerHTML = `<h3>${route.name}</h3><div class="metric"><span>Server</span><b>${route.server_up?'UP':'DOWN'}</b></div>`+
-        `<div class="metric"><span>Route</span><b>${route.up?'UP':'DOWN'}</b></div>`+
-        `<div class="metric"><span>RTT</span><b>${rtt}</b></div>`+
-        `<div class="metric"><span>Utilization</span><b>${(route.utilization*100).toFixed(1)}%</b></div>`+
-        `<div class="metric"><span>Active flows</span><b>${route.active_flows}</b></div>`;
+      for (const [label, value] of [
+        ['Server', route.server_up ? 'UP' : 'DOWN'],
+        ['Route', route.up ? 'UP' : 'DOWN'],
+        ['RTT', rtt],
+        ['Utilization', (route.utilization*100).toFixed(1)+'%'],
+        ['Active flows', String(route.active_flows)],
+      ]) {
+        const metric = document.createElement('div'); metric.className='metric';
+        const name = document.createElement('span'); name.textContent=label;
+        const reading = document.createElement('b'); reading.textContent=value;
+        metric.append(name, reading); card.appendChild(metric);
+      }
       cards.appendChild(card);
     }
     const choice = displayData.last_route;

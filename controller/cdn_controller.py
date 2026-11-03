@@ -94,6 +94,8 @@ class CDN(app_manager.RyuApp):
                                   out_port=ofp.OFPP_ANY, out_group=ofp.OFPG_ANY,
                                   match=ps.OFPMatch()))
         self.dps[dp.id] = dp
+        for route in ROUTES:
+            route.clear_switch_ports(dp.id)
         for dpid, port in self.blocked:
             if dpid == dp.id:
                 self.block(dp, port)
@@ -232,6 +234,9 @@ class CDN(app_manager.RyuApp):
         """Shift a live connection to another route to the same server."""
         old = flow.route
         flow.route = route
+        self.last_route_event = {
+            'time': time.time(), 'client': flow.ip,
+            'server': route.server, 'route': route.name}
         self.install(flow)
         self.remove_rules(flow, old, keep={hop.dpid for hop in route.hops})
         self.logger.info('flow %s:%d moved from %s to %s (%s)',

@@ -1,6 +1,8 @@
 content/*.bin
 results/raw.csv
 results/data/client-transfers.csv
+results/live_routes.json
+results/live_routes.json.tmp
 *.save
 __pycache__/
 *.py[cod]
