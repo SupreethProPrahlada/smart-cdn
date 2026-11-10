@@ -2,6 +2,9 @@
 
 A raw TCP content service that uses a Ryu SDN controller to select among three servers in Mininet, and among two paths to srv1. The controller considers server health and reported load, and measures path round-trip time, link utilization and link state itself. When a path fails or degrades it moves live connections to the other path. The experiment runner uses six distinct client hosts (c1-c6); c7 is reserved for congestion traffic.
 
+See [docs/agile-workflow.md](docs/agile-workflow.md) for the project workflow and
+[docs/product-backlog.md](docs/product-backlog.md) for prioritized work and acceptance criteria.
+
 ## Requirements and setup
 
 Install the system networking tools on Ubuntu:
