@@ -4,6 +4,8 @@ A raw TCP content service that uses a Ryu SDN controller to select among three s
 
 See [docs/agile-workflow.md](docs/agile-workflow.md) for the project workflow and
 [docs/product-backlog.md](docs/product-backlog.md) for prioritized work and acceptance criteria.
+The layered verification procedure and execution snapshot are in [docs/test-plan.md](docs/test-plan.md).
+The IEEE 829-style test plan and case results are in [docs/Smart_CDN_IEEE_829_Test_Plan.pdf](docs/Smart_CDN_IEEE_829_Test_Plan.pdf).
 
 ## Requirements and setup
 
